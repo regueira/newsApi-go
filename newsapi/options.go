@@ -1,6 +1,7 @@
 package newsapi
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"time"
@@ -73,6 +74,24 @@ func WithoutDuration() QueryOption {
 	}
 }
 
+func WithContentSelector(selector map[string]string) QueryOption {
+	return func(n *newsApi) {
+		n.contentSelector = selector
+	}
+}
+
+func WithOrder(order bool) QueryOption {
+	return func(n *newsApi) {
+		n.order = order
+	}
+}
+
+func WithDefaultSelector(selector string) QueryOption {
+	return func(n *newsApi) {
+		n.defaultSelector = selector
+	}
+}
+
 type NewsApiOption func(*newsApi)
 
 func WithProxy(proxy *url.URL) NewsApiOption {
@@ -88,5 +107,11 @@ func WithProxy(proxy *url.URL) NewsApiOption {
 func WithoutProxy() NewsApiOption {
 	return func(n *newsApi) {
 		n.client = nil
+	}
+}
+
+func WithContext(ctx context.Context) NewsApiOption {
+	return func(n *newsApi) {
+		n.ctx = ctx
 	}
 }

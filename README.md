@@ -1,14 +1,16 @@
 # Google News API
-[![Go Report Card](https://goreportcard.com/badge/github.com/Zhima-Mochi/newsApi-go)](https://goreportcard.com/report/github.com/Zhima-Mochi/newsApi-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/regueira/newsApi-go)](https://goreportcard.com/report/github.com/regueira/newsApi-go)
 
 The News API is a Go package that allows you to fetch news articles from Google News. It provides a simple and convenient way to retrieve news based on various criteria such as language, location, topic, and search query.
+
+> Fixed Google News redirection with `chromedp`
 
 ## Installation
 
 To use the News API package in your Go project, you can install it using the `go get` command:
 
 ```
-go get github.com/Zhima-Mochi/newsApi-go/newsapi
+go get github.com/regueira/newsApi-go/newsapi
 ```
 
 ## Usage
@@ -16,7 +18,7 @@ go get github.com/Zhima-Mochi/newsApi-go/newsapi
 Import the News API package in your Go code:
 
 ```go
-import "github.com/Zhima-Mochi/newsApi-go/newsapi"
+import "github.com/regueira/newsApi-go/newsapi"
 ```
 
 ### Creating a News API instance
@@ -111,16 +113,16 @@ newsList, err := api.GetTopNews()
 // ...
 ```
 
-### Fetching content of a news article
+### Fetching content of al news articles
 
 ```go
-newsContent, err := newsapi.FetchNewsContent(news.Link)
+newsContents, err := newsapi.FetchSourceContents(newsList)
 if err != nil {
     // handle error
 }
 
 // Access news content
-fmt.Println(newsContent)
+fmt.Println(newsContents)
 ```
 
 
@@ -130,8 +132,8 @@ fmt.Println(newsContent)
 Please refer to the [example](example/main.go) for a complete example of using the News API package.
 
 ## Todo
-- [ ] FetchNewsContent() is not working properly for some news's website.
 - [ ] Implement FetchAllNewsContent(newsList []*News) with goroutine.
+- [ ] Replace `Colly` dependency with `Chromedp`
 
 ## License
 

@@ -1,7 +1,9 @@
 package newsapi
 
 import (
+	"context"
 	"fmt"
+	"github.com/chromedp/chromedp"
 	"io"
 	"log"
 	"net/http"
@@ -11,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gocolly/colly"
 	"github.com/mmcdole/gofeed"
 )
 
@@ -19,10 +20,13 @@ var _ NewsApi = (*newsApi)(nil)
 
 var (
 	defaultNewsApi = &newsApi{
-		language: "en",
-		location: "US",
-		limit:    10,
-		client:   http.DefaultClient,
+		language:        "en",
+		location:        "US",
+		limit:           10,
+		order:           false,
+		client:          http.DefaultClient,
+		defaultSelector: "", //No default
+		ctx:             context.Background(),
 	}
 
 	googleNewsURL = url.URL{
@@ -33,13 +37,17 @@ var (
 )
 
 type newsApi struct {
-	language  string
-	location  string
-	period    *time.Duration
-	startDate *time.Time
-	endDate   *time.Time
-	limit     int
-	client    *http.Client
+	language        string
+	location        string
+	period          *time.Duration
+	startDate       *time.Time
+	endDate         *time.Time
+	limit           int
+	order           bool
+	contentSelector map[string]string
+	defaultSelector string
+	client          *http.Client
+	ctx             context.Context
 }
 
 func NewNewsApi(options ...NewsApiOption) *newsApi {
@@ -91,7 +99,6 @@ func (n *newsApi) SearchNews(query string) ([]*News, error) {
 	if query == "" {
 		return nil, ErrEmptyQuery
 	}
-	// query = strings.ReplaceAll(query, " ", "%20")
 	return n.getNews("rss/search", query)
 }
 
@@ -106,13 +113,13 @@ func (n *newsApi) composeURL(path string, query string) url.URL {
 	if query != "" {
 		q.Set("q", query)
 		if n.period != nil {
-			q.Set("q", q.Get("q")+"+when:"+FormatDuration(*n.period))
+			q.Set("q", q.Get("q")+" when:"+FormatDuration(*n.period))
 		}
 		if n.endDate != nil {
-			q.Set("q", q.Get("q")+"+before:"+n.endDate.Format("2006-01-02"))
+			q.Set("q", q.Get("q")+" before:"+n.endDate.Format(time.DateOnly))
 		}
 		if n.startDate != nil {
-			q.Set("q", q.Get("q")+"+after:"+n.startDate.Format("2006-01-02"))
+			q.Set("q", q.Get("q")+" after:"+n.startDate.Format(time.DateOnly))
 		}
 	}
 	searchURL.RawQuery = q.Encode()
@@ -151,9 +158,11 @@ func (n *newsApi) getNews(path, query string) ([]*News, error) {
 		newsList = append(newsList, news)
 	}
 	// sort by published date
-	sort.Slice(newsList, func(i, j int) bool {
-		return newsList[i].PublishedParsed.After(*newsList[j].PublishedParsed)
-	})
+	if n.order {
+		sort.Slice(newsList, func(i, j int) bool {
+			return newsList[i].PublishedParsed.After(*newsList[j].PublishedParsed)
+		})
+	}
 	// limit the number of news
 	if n.limit > 0 && n.limit < len(newsList) {
 		newsList = newsList[:n.limit]
@@ -162,13 +171,21 @@ func (n *newsApi) getNews(path, query string) ([]*News, error) {
 }
 
 // FetchSourceLinks fetches the source links by the google news links
-func FetchSourceLinks(newsList []*News) {
+func (n *newsApi) FetchSourceLinks(newsList []*News) {
+	// create chrome browser context
+	parentCtx, cancel := chromedp.NewContext(n.ctx)
+	defer cancel()
+
 	var wg sync.WaitGroup
 	for _, news := range newsList {
 		wg.Add(1)
 		go func(news *News) {
 			defer wg.Done()
-			err := news.fetchSourceLink()
+			// create chrome tab context
+			ctx, cancelTab := chromedp.NewContext(parentCtx)
+			defer cancelTab()
+
+			err := news.fetchSourceLink(ctx)
 			if err != nil {
 				log.Println(fmt.Printf("error fetching source link: %s", err))
 			}
@@ -178,79 +195,27 @@ func FetchSourceLinks(newsList []*News) {
 }
 
 // FetchSourceContents fetches the source contents by the source links
-func FetchSourceContents(newsList []*News) {
+func (n *newsApi) FetchSourceContents(newsList []*News) {
 	var wg sync.WaitGroup
 	for _, news := range newsList {
 		wg.Add(1)
 		go func(news *News) {
 			defer wg.Done()
-			err := news.fetchSourceContent()
+
+			linkURL, err := url.Parse(news.SourceLink)
 			if err != nil {
-				log.Println(fmt.Printf("error fetching source content: %s", err))
-			}
-		}(news)
-	}
-	wg.Wait()
-}
-
-// Deprecated: use FetchSourceContents instead
-func FetchNewsContent(link string) (string, error) {
-	var content string
-	if IsNewsApiLink(link) {
-		var err error
-		link, err = GetOriginalLink(link)
-		if err != nil {
-			return "", err
-		}
-	}
-	c := colly.NewCollector(colly.Async(true))
-	c.OnHTML("script", func(e *colly.HTMLElement) {
-		e.DOM.Remove()
-	})
-	helper := func(e *colly.HTMLElement) {
-		e.ForEach("p", func(_ int, el *colly.HTMLElement) {
-			content += el.Text + "\n"
-		})
-	}
-	linkURL, err := url.Parse(link)
-	if err != nil {
-		return "", err
-	}
-
-	if selector, ok := newsHostToContentSelector[linkURL.Host]; ok {
-		c.OnHTML(selector, func(e *colly.HTMLElement) {
-			helper(e)
-		})
-	}
-
-	err = c.Visit(link)
-	if err != nil {
-		return "", err
-	}
-	c.Wait()
-	if content != "" {
-		content = CleanHTML(content)
-		return content, nil
-	} else {
-		return "", ErrFailedToGetNewsContent
-	}
-}
-
-// Deprecated: use FetchSourceLinks instead
-func ToSourceLinks(newsList []*News) {
-	var wg sync.WaitGroup
-	for _, news := range newsList {
-		wg.Add(1)
-		go func(news *News) {
-			defer wg.Done()
-			// check if the link is a google news link
-			if IsNewsApiLink(news.Link) {
-				originalLink, err := GetOriginalLink(news.Link)
-				if err != nil {
-					return
+				log.Println(fmt.Printf("error fetching source link: %s", err))
+			} else {
+				currSelector := n.contentSelector[linkURL.Host]
+				if currSelector == "" && n.defaultSelector != "" {
+					currSelector = n.defaultSelector
+					log.Println("using default selector:", linkURL)
 				}
-				// set original link
-				news.Link = originalLink
+
+				err = news.fetchSourceContent(currSelector)
+				if err != nil {
+					log.Println(fmt.Printf("error fetching source content: %s", err))
+				}
 			}
 		}(news)
 	}

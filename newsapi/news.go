@@ -1,6 +1,7 @@
 package newsapi
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -60,14 +61,14 @@ func NewNews(item *gofeed.Item) *News {
 	return n
 }
 
-func (n *News) fetchSourceLink() error {
+func (n *News) fetchSourceLink(ctx context.Context) error {
 	if n.SourceLink != "" {
 		return nil
 	}
 
 	// check if the link is a google news link
 	if IsNewsApiLink(n.Link) {
-		originalLink, err := GetOriginalLink(n.Link)
+		originalLink, err := GetOriginalLink(ctx, n.Link)
 		if err != nil {
 			return fmt.Errorf("error getting original link: %w", err)
 		}
@@ -77,13 +78,13 @@ func (n *News) fetchSourceLink() error {
 	return nil
 }
 
-func (n *News) fetchSourceContent() error {
+func (n *News) fetchSourceContent(contentSelector string) error {
 	if n.SourceContent != "" {
 		return nil
 	}
 
 	if n.SourceLink == "" {
-		err := n.fetchSourceLink()
+		err := n.fetchSourceLink(context.Background())
 		if err != nil {
 			return fmt.Errorf("error fetching source link: %s", err)
 		}
@@ -160,8 +161,8 @@ func (n *News) fetchSourceContent() error {
 		n.SourceKeywords = strings.Split(ogKeywords, ",")
 	})
 
-	if selector, ok := newsHostToContentSelector[linkURL.Host]; ok {
-		c.OnHTML(selector, func(e *colly.HTMLElement) {
+	if contentSelector != "" {
+		c.OnHTML(contentSelector, func(e *colly.HTMLElement) {
 			helper(e)
 		})
 	}

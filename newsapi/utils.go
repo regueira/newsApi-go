@@ -1,16 +1,19 @@
 package newsapi
 
 import (
+	"context"
 	"fmt"
-	"io/ioutil"
+	"github.com/chromedp/chromedp"
+	"github.com/songmu/retry"
+	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/gocolly/colly"
 	"github.com/mmcdole/gofeed"
 )
 
@@ -242,7 +245,7 @@ func GetFeedItems(client *http.Client, req *http.Request) ([]*gofeed.Item, error
 		return nil, fmt.Errorf("error getting response: %w", err)
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("error reading response body: %w", err)
 	}
@@ -260,18 +263,46 @@ func IsNewsApiLink(link string) bool {
 }
 
 // GetOriginalLink gets the original link
-func GetOriginalLink(sourceLink string) (string, error) {
+func GetOriginalLink(ctx context.Context, sourceLink string) (string, error) {
 	originalLink := ""
-	c := colly.NewCollector(colly.Async(true))
-	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
-		originalLink = e.Attr("href")
-	})
-	err := c.Visit(sourceLink)
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(sourceLink),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			linkURL, err := url.Parse(sourceLink)
+			if err != nil {
+				return err
+			}
+
+			return waitLocationToChange(ctx, linkURL.Host)
+		}),
+		chromedp.Location(&originalLink),
+	)
 	if err != nil {
 		return "", err
 	}
-	c.Wait()
+
 	return originalLink, nil
+}
+
+func waitLocationToChange(ctx context.Context, search string) error {
+	var title string
+	return retry.Retry(10, 100*time.Millisecond, func() error {
+		err := chromedp.Run(ctx,
+			chromedp.Location(&title))
+		if err != nil {
+			return err
+		}
+
+		linkURL, err := url.Parse(title)
+		if err != nil {
+			return err
+		}
+
+		if linkURL.Host != search {
+			return nil
+		}
+		return fmt.Errorf("location don't change %s", search)
+	})
 }
 
 func FormatDuration(duration time.Duration) string {
@@ -299,37 +330,3 @@ func FormatDuration(duration time.Duration) string {
 
 	return formatted
 }
-
-var (
-	newsHostToContentSelector = map[string]string{
-		"tw.news.yahoo.com":  ".caas-body",
-		"chinatimes.com":     ".article-body",
-		"tvbs.com":           ".article_content",
-		"udn.com":            ".article-content__editor",
-		"appledaily.com":     ".ndArticle_margin",
-		"ettoday.net":        ".story",
-		"news.ltn.com.tw":    ".text",
-		"www.cool3c.com":     ".article-content",
-		"www.ithome.com.tw":  ".paragraph",
-		"www.storm.mg":       ".article_content",
-		"www.chinatimes.com": ".article-body",
-		"www.cw.com.tw":      ".article-content",
-		"www.bnext.com.tw":   ".article-content",
-		"www.ettoday.net":    ".story",
-		"www.eyny.com":       ".article-content",
-		"www.ithome.com":     ".paragraph",
-		"www.mobile01.com":   ".single-post-content",
-		"www.peoplenews.tw":  ".article-content",
-		"cnn.com":            ".zn-body__paragraph",
-		"reuters.com":        ".StandardArticleBody_body",
-		"cnbc.com":           ".group",
-		"marketwatch.com":    ".article__body",
-		"www.cna.com.tw":     ".paragraph",
-		"www.setn.com":       ".article-content",
-		"3c.ltn.com.tw":      ".text",
-		"www.youtube.com":    "",
-		"www.kocpc.com.tw":   ".content-inner",
-		"star.ettoday.net":   ".story",
-		"www.mirrormedia.mg": ".article-content",
-	}
-)
