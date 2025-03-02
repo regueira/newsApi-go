@@ -7,4 +7,7 @@ type NewsApi interface {
 	SearchNews(query string) ([]*News, error)
 
 	SetQueryOptions(options ...QueryOption)
+
+	FetchSourceLinks(newsList []*News)
+	FetchSourceContents(newsList []*News)
 }
